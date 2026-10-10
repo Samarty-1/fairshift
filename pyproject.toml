@@ -1,0 +1,28 @@
+[project]
+name = "fairshift"
+version = "0.1.0"
+description = "Staff rostering for shops and cafés: fair, legal, costed rotas, and a minimal-change re-plan when someone calls in sick"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["ortools>=9.10", "pyyaml>=6"]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.110", "uvicorn>=0.29"]
+dev = ["pytest>=8", "httpx>=0.27", "fastapi>=0.110"]
+
+[project.scripts]
+fairshift = "fairshift.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fairshift = ["static/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

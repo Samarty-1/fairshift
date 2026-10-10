@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fairshift</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --fg:#1c1c1a; --mut:#6b6b66; --line:#e2e1dc; --acc:#2d5bd8; --bad:#b3261e; --good:#1f7a4a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141413; --card:#1d1d1b; --fg:#ecebe6; --mut:#9c9b95; --line:#2e2d2a; --acc:#7ea2ff; --bad:#ff7b72; --good:#5cc48b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { max-width:1200px; margin:0 auto; padding:16px; display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:1.3rem; }
+  header p { margin:0; color:var(--mut); }
+  main { max-width:1200px; margin:0 auto; padding:0 16px 40px; display:grid; grid-template-columns:minmax(0,380px) minmax(0,1fr); gap:16px; }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  textarea { width:100%; min-height:420px; font:12px/1.45 ui-monospace, Consolas, monospace; color:var(--fg); background:var(--bg);
+             border:1px solid var(--line); border-radius:8px; padding:8px; resize:vertical; }
+  button, select, input { font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:6px 10px; }
+  button.primary { background:var(--acc); color:var(--bg); border-color:var(--acc); font-weight:600; }
+  button:disabled { opacity:.5; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0; }
+  .kpi { display:flex; gap:20px; flex-wrap:wrap; }
+  .kpi div b { display:block; font-size:1.4rem; font-variant-numeric:tabular-nums; }
+  .kpi div span { color:var(--mut); font-size:.85rem; }
+  iframe { width:100%; height:620px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
+  .err { color:var(--bad); white-space:pre-wrap; }
+  .changes { font:13px/1.5 ui-monospace, Consolas, monospace; white-space:pre-wrap; }
+  .muted { color:var(--mut); }
+  h2 { font-size:1rem; margin:0 0 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>fairshift</h1>
+  <p>Fair, legal, costed rosters in seconds, and a new plan when someone calls in sick.</p>
+</header>
+<main>
+  <section class="card">
+    <h2>Your shop</h2>
+    <p class="muted">Staff, availability and the cover you need, as YAML. The demo café is loaded.</p>
+    <textarea id="yaml" spellcheck="false" aria-label="Roster problem in YAML"></textarea>
+    <div class="row"><button class="primary" id="solve">Build roster</button><button id="reset">Reload demo</button></div>
+    <div id="error" class="err" role="alert"></div>
+  </section>
+  <section>
+    <div class="card" id="results" hidden>
+      <div class="kpi" id="kpi"></div>
+      <div class="row">
+        <label for="absent">Sick call:</label>
+        <select id="absent"></select>
+        <label for="from">from</label><input id="from" type="date">
+        <button id="replan">Re-plan</button>
+        <button id="csv">Download CSV</button>
+        <button id="msgs">Copy messages</button>
+      </div>
+      <div id="changes" class="changes"></div>
+      <iframe id="rota" title="Roster"></iframe>
+    </div>
+    <div class="card" id="empty"><p class="muted">Build a roster to see it here.</p></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let last = null;
+
+async function call(path, body) {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const data = await r.json();
+  if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+  return data;
+}
+
+function show(res) {
+  last = res;
+  const t = res.totals;
+  $("kpi").innerHTML = [
+    [`${(t.coverage * 100).toFixed(1)}%`, "coverage"],
+    [`$${t.labour_cost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, "labour cost"],
+    [`${t.hours}h`, "rostered"], [`${t.overtime_hours}h`, "overtime"],
+    [`${t.uncovered_shifts}`, "gaps"], [`${t.solve_seconds}s`, "solve time"],
+  ].map(([v, l]) => `<div><b>${v}</b><span>${l}</span></div>`).join("");
+  $("rota").srcdoc = res.rota_html;
+  $("absent").innerHTML = res.staff.map((s) => `<option value="${s.id}">${s.name.replace(/</g, "&lt;")}</option>`).join("");
+  if (!$("from").value) $("from").value = res.start;
+  $("changes").textContent = res.changes ? (res.changes.length ? "Changes:\n" + res.changes.join("\n") : "No changes needed.") : "";
+  $("results").hidden = false; $("empty").hidden = true;
+}
+
+async function run(fn) {
+  $("error").textContent = "";
+  document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  try { await fn(); } catch (e) { $("error").textContent = e.message; }
+  finally { document.querySelectorAll("button").forEach((b) => (b.disabled = false)); }
+}
+
+$("solve").onclick = () => run(async () => show(await call("/api/solve", { yaml: $("yaml").value })));
+$("replan").onclick = () => run(async () => {
+  if (!last) return;
+  const res = await call("/api/replan", { yaml: $("yaml").value, assignments: last.assignments,
+                                          absent: $("absent").value, from: $("from").value });
+  $("yaml").value = res.yaml;     // the absence is now part of the shop's data
+  show(res);
+});
+$("reset").onclick = () => run(async () => { $("yaml").value = (await call("/api/demo")).yaml; });
+$("csv").onclick = () => {
+  if (!last) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([last.csv], { type: "text/csv" }));
+  a.download = "roster.csv"; a.click();
+};
+$("msgs").onclick = () => run(async () => {
+  if (!last) return;
+  await navigator.clipboard.writeText(Object.values(last.messages).join("\n\n"));
+  $("changes").textContent = "Messages copied: paste them into your team chat.";
+});
+run(async () => { $("yaml").value = (await call("/api/demo")).yaml; });
+</script>
+</body>
+</html>
